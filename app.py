@@ -128,15 +128,19 @@ def deploy_compose(compose_text):
 def index():
     return render_template("index.html")
 
-@app.route("/api/registry/search")
-def registry_search():
-    query = request.args.get("q", "")
-    if not query:
-        return jsonify({"error": "Missing search query"})
-    
-    res = requests.get(f"{DOCKER_HUB_API}/search/repositories?q={query}&type=image")
-    return jsonify(res.json())
+@app.route("/api/registry/image/<image>/tags")
+def registry_tags(image):
+    """Get tags for official Docker images like 'nginx', 'redis', etc."""
+    url = f"https://hub.docker.com/v2/repositories/library/ {image}/tags/"
+    res = requests.get(url)
 
+    if res.status_code != 200:
+        return jsonify({"error": "Failed to fetch tags", "status": res.status_code, "body": res.text})
+
+    try:
+        return jsonify(res.json())
+    except requests.exceptions.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON response from Docker Hub", "body": res.text})
 
 @app.route("/api/registry/image/<namespace>/<image>/tags")
 def registry_tags(namespace, image):
