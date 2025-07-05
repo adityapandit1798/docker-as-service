@@ -122,9 +122,11 @@ def deploy_compose(compose_text):
 
     return True, "Deployment finished"
 
+
 @app.route("/", methods=["GET"])
 def index():
     return render_template("index.html")
+
 
 @app.route("/deploy", methods=["POST"])
 def deploy():
@@ -136,10 +138,12 @@ def deploy():
     success, msg = deploy_compose(compose_text)
     return jsonify({"success": success, "message": msg})
 
+
 @app.route("/logs")
 def logs():
     global last_deploy_logs
     return jsonify({"logs": last_deploy_logs})
+
 
 @app.route("/api/containers")
 def api_containers():
@@ -148,12 +152,14 @@ def api_containers():
         return jsonify(r.json())
     return jsonify([])
 
+
 @app.route("/api/images")
 def api_images():
     r = requests.get(f"{DOCKER_HOST}/images/json")
     if r.ok:
         return jsonify(r.json())
     return jsonify([])
+
 
 @app.route("/api/networks")
 def api_networks():
@@ -162,12 +168,57 @@ def api_networks():
         return jsonify(r.json())
     return jsonify([])
 
+
 @app.route("/api/volumes")
 def api_volumes():
     r = requests.get(f"{DOCKER_HOST}/volumes")
     if r.ok:
         return jsonify(r.json())
     return jsonify({"volumes": []})
+
+# === Container Management Routes ===
+
+@app.route("/api/containers/<container_id>/start", methods=["POST"])
+def start_container(container_id):
+    r = requests.post(f"{DOCKER_HOST}/containers/{container_id}/start")
+    return jsonify({"status": "ok" if r.ok else "error", "response": r.text})
+
+
+@app.route("/api/containers/<container_id>/stop", methods=["POST"])
+def stop_container(container_id):
+    r = requests.post(f"{DOCKER_HOST}/containers/{container_id}/stop", timeout=10)
+    return jsonify({"status": "ok" if r.ok else "error", "response": r.text})
+
+
+@app.route("/api/containers/<container_id>/restart", methods=["POST"])
+def restart_container(container_id):
+    r = requests.post(f"{DOCKER_HOST}/containers/{container_id}/restart", timeout=10)
+    return jsonify({"status": "ok" if r.ok else "error", "response": r.text})
+
+
+@app.route("/api/containers/<container_id>/delete", methods=["DELETE"])
+def delete_container(container_id):
+    r = requests.delete(f"{DOCKER_HOST}/containers/{container_id}?force=true")
+    return jsonify({"status": "ok" if r.ok else "error", "response": r.text})
+
+
+@app.route("/api/containers/<container_id>/logs", methods=["GET"])
+def container_logs(container_id):
+    params = {
+        "stdout": 1,
+        "stderr": 1,
+        "tail": 100,
+        "timestamps": False
+    }
+    r = requests.get(f"{DOCKER_HOST}/containers/{container_id}/logs", params=params)
+    return jsonify({"logs": r.text.splitlines()})
+
+
+@app.route("/api/containers/<container_id>/inspect", methods=["GET"])
+def container_inspect(container_id):
+    r = requests.get(f"{DOCKER_HOST}/containers/{container_id}/json")
+    return jsonify(r.json() if r.ok else {"error": r.text})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=True)
