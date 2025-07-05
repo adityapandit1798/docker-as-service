@@ -7,9 +7,9 @@
         textarea { width: 100%; height: 250px; font-family: monospace; }
         pre { background: #f0f0f0; padding: 10px; overflow-x: auto; max-height: 200px; }
         .section { margin-bottom: 30px; }
-        button { padding: 10px 20px; font-size: 16px; }
-        .status-ok { color: green; }
-        .status-error { color: red; }
+        button { padding: 6px 12px; font-size: 14px; margin-right: 5px; }
+        .status-ok { color: green; font-weight: bold; }
+        .status-error { color: red; font-weight: bold; }
         table { border-collapse: collapse; width: 100%; }
         th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
         th { background: #eee; }
@@ -37,7 +37,16 @@
         <h3>Containers</h3>
         <div id="containers"></div>
 
+        <h3>Image Registry (Docker Hub)</h3>
+        <input type="text" id="searchImageInput" placeholder="Search for image (e.g. nginx, alpine)" />
+        <button onclick="searchRegistry()">🔍 Search</button>
+
+        <div id="registryResults"></div>
+        <div id="tagResults"></div>
+
         <h3>Images</h3>
+        <button onclick="pullNewImage()"> Pull New Image</button>
+        <button onclick="pruneImages()"> Prune Unused Images</button>
         <div id="images"></div>
 
         <h3>Networks</h3>
@@ -76,12 +85,78 @@ async function refreshStatus() {
     // Containers
     let res = await fetch('/api/containers');
     let data = await res.json();
-    document.getElementById('containers').innerHTML = renderTable(data, ["Id", "Names", "Image", "State", "Status"]);
+
+    let html = "<table><tr>";
+    for (const col of ["Id", "Names", "Image", "State", "Status", "Actions"]) {
+        html += `<th>${col}</th>`;
+    }
+    html += "</tr>";
+
+    for (const row of data) {
+        const id = row.Id.substr(0, 12);
+        const state = row.State.toLowerCase();
+
+        html += "<tr>";
+        html += `<td>${id}</td>`;
+        html += `<td>${row.Names.join(", ")}</td>`;
+        html += `<td>${row.Image}</td>`;
+        html += `<td><span class="status-${state.includes("running") ? "ok" : "error"}">${state}</span></td>`;
+        html += `<td>${row.Status}</td>`;
+        html += `<td>
+            <button onclick="startContainer('${id}')"> Start</button>
+            <button onclick="stopContainer('${id}')"> Stop</button>
+            <button onclick="restartContainer('${id}')"> Restart</button>
+            <button onclick="deleteContainer('${id}')"> Delete</button>
+            <button onclick="showLogs('${id}')"> Logs</button>
+            <button onclick="toggleInspect('${id}')"> Inspect</button>
+        </td>`;
+        html += "</tr>";
+
+        // Hidden inspect block
+        html += `<tr style="display:none" id="inspect_${id}">
+            <td colspan="6">
+                <pre id="inspect_data_${id}"></pre>
+            </td>
+        </tr>`;
+    }
+
+    html += "</table>";
+    document.getElementById('containers').innerHTML = html;
 
     // Images
     res = await fetch('/api/images');
     data = await res.json();
-    document.getElementById('images').innerHTML = renderTable(data, ["Id", "RepoTags", "Size"]);
+
+    html = "<table><tr>";
+    for (const col of ["Id", "RepoTags", "Size", "Actions"]) {
+        html += `<th>${col}</th>`;
+    }
+    html += "</tr>";
+
+    for (const row of data) {
+        const id = row.Id.substr(0, 12);
+        const tags = row.RepoTags || ["<none>:<none>"];
+
+        html += "<tr>";
+        html += `<td>${id}</td>`;
+        html += `<td>${tags.join(", ")}</td>`;
+        html += `<td>${(row.Size / 1048576).toFixed(2)} MB</td>`;
+        html += `<td>
+            <button onclick="inspectImage('${id}')">Inspect</button>
+            <button onclick="removeImage('${id}')">Remove</button>
+        </td>`;
+        html += "</tr>";
+
+        // Hidden inspect block
+        html += `<tr style="display:none" id="image_inspect_${id}">
+            <td colspan="4">
+                <pre id="image_inspect_data_${id}"></pre>
+            </td>
+        </tr>`;
+    }
+
+    html += "</table>";
+    document.getElementById('images').innerHTML = html;
 
     // Networks
     res = await fetch('/api/networks');
@@ -129,6 +204,173 @@ window.onload = () => {
     refreshStatus();
     fetchLogs();
 };
+
+async function searchRegistry() {
+    const query = document.getElementById("searchImageInput").value.trim().toLowerCase();
+    if (!query) return alert("Please enter an image name (e.g. nginx)");
+
+    // Fetch image details
+    let res = await fetch(`/api/registry/image/${query}`);
+    let data = await res.json();
+
+    if (data.error) {
+        alert(`Image info error: ${data.error}`);
+        return;
+    }
+
+    // Show image description
+    let html = `<h4>${data.name}</h4><p>${data.description || "No description available"}</p>`;
+    document.getElementById("registryResults").innerHTML = html;
+
+    // Fetch tags
+    res = await fetch(`/api/registry/image/${query}/tags`);
+    data = await res.json();
+
+    if (data.error) {
+        alert(`Tags error: ${data.error}`);
+        return;
+    }
+
+    html = `<h4>Tags</h4><ul>`;
+    if (data.results && data.results.length > 0) {
+        for (const tag of data.results) {
+            html += `<li>
+                ${tag.name} 
+                <button onclick="pullImage('library/${query}:${tag.name}')">Pull</button>
+            </li>`;
+        }
+    } else {
+        html += "<li>No tags found</li>";
+    }
+    html += "</ul>";
+
+    document.getElementById("tagResults").innerHTML = html;
+}
+
+
+async function viewTags(namespace, image) {
+    const res = await fetch(`/api/registry/image/${namespace}/${image}/tags`);
+    const data = await res.json();
+
+    let html = `<h4>Tags for ${namespace}/${image}</h4><ul>`;
+    if (data.results && data.results.length > 0) {
+        for (const tag of data.results) {
+            html += `<li>
+                ${tag.name} 
+                <button onclick="pullImage('${namespace}/${image}:${tag.name}')">📥 Pull</button>
+            </li>`;
+        }
+    } else {
+        html += "<li>No tags available</li>";
+    }
+    html += "</ul>";
+
+    document.getElementById("tagResults").innerHTML = html;
+}
+
+async function pullImage(imageName) {
+    if (!confirm(`Pull image ${imageName}?`)) return;
+
+    const res = await fetch("/api/images/pull", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ image: imageName })
+    });
+
+    const json = await res.json();
+    alert(json.message);
+}
+
+
+// Container Actions
+async function startContainer(id) {
+    const res = await fetch(`/api/containers/${id}/start`, { method: "POST" });
+    alert(`Start container ${id}: ${res.ok ? 'OK' : 'Error'}`);
+    refreshStatus();
+}
+
+async function stopContainer(id) {
+    const res = await fetch(`/api/containers/${id}/stop`, { method: "POST" });
+    alert(`Stop container ${id}: ${res.ok ? 'OK' : 'Error'}`);
+    refreshStatus();
+}
+
+async function restartContainer(id) {
+    const res = await fetch(`/api/containers/${id}/restart`, { method: "POST" });
+    alert(`Restart container ${id}: ${res.ok ? 'OK' : 'Error'}`);
+    refreshStatus();
+}
+
+async function deleteContainer(id) {
+    if (!confirm(`Delete container ${id}?`)) return;
+    const res = await fetch(`/api/containers/${id}/delete`, { method: "DELETE" });
+    alert(`Delete container ${id}: ${res.ok ? 'OK' : 'Error'}`);
+    refreshStatus();
+}
+
+async function showLogs(id) {
+    const res = await fetch(`/api/containers/${id}/logs`);
+    const data = await res.json();
+    alert("Last 100 lines:\n" + data.logs.slice(-20).join("\n"));
+}
+
+async function toggleInspect(id) {
+    const el = document.getElementById(`inspect_${id}`);
+    const dataEl = document.getElementById(`inspect_data_${id}`);
+    if (el.style.display === "none") {
+        const res = await fetch(`/api/containers/${id}/inspect`);
+        const data = await res.json();
+        dataEl.innerText = JSON.stringify(data, null, 2);
+        el.style.display = "";
+    } else {
+        el.style.display = "none";
+    }
+}
+
+async function inspectImage(id) {
+    const el = document.getElementById(`image_inspect_${id}`);
+    const dataEl = document.getElementById(`image_inspect_data_${id}`);
+    if (el.style.display === "none") {
+        const res = await fetch(`/api/images/${id}/inspect`);
+        const data = await res.json();
+        dataEl.innerText = JSON.stringify(data, null, 2);
+        el.style.display = "";
+    } else {
+        el.style.display = "none";
+    }
+}
+
+async function removeImage(id) {
+    if (!confirm(`Remove image ${id}?`)) return;
+    const res = await fetch(`/api/images/${id}/remove`, { method: "DELETE" });
+    alert(`Remove image ${id}: ${res.ok ? 'OK' : 'Error'}`);
+    refreshStatus();
+}
+
+async function pullNewImage() {
+    const image = prompt("Enter image name (e.g. nginx or alpine:3.19):");
+    if (!image) return;
+
+    const res = await fetch("/api/images/pull", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ image })
+    });
+
+    const json = await res.json();
+    alert(json.message);
+    refreshStatus();
+}
+
+async function pruneImages() {
+    if (!confirm("Prune all unused images?")) return;
+
+    const res = await fetch("/api/images/prune", { method: "POST" });
+    const data = await res.json();
+    alert(data.message);
+    refreshStatus();
+}
+
 </script>
 
 </body>
