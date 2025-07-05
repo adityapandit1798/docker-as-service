@@ -5,9 +5,10 @@ import re
 
 app = Flask(__name__, template_folder='templates')
 
-DOCKER_HOST = "http://192.168.192.136:2375"  # Change to your Docker API endpoint
+DOCKER_HOST = "http://192.168.192.136:2375"
 
-last_deploy_logs = []  # store logs/errors to show on UI
+DOCKER_HUB_API = "https://hub.docker.com/v2 "
+last_deploy_logs = [] 
 
 def parse_duration(duration):
     units = {
@@ -127,6 +128,29 @@ def deploy_compose(compose_text):
 def index():
     return render_template("index.html")
 
+@app.route("/api/registry/search")
+def registry_search():
+    query = request.args.get("q", "")
+    if not query:
+        return jsonify({"error": "Missing search query"})
+    
+    res = requests.get(f"{DOCKER_HUB_API}/search/repositories?q={query}&type=image")
+    return jsonify(res.json())
+
+
+@app.route("/api/registry/image/<namespace>/<image>/tags")
+def registry_tags(namespace, image):
+    page = request.args.get("page", 1)
+    res = requests.get(f"{DOCKER_HUB_API}/repositories/{namespace}/{image}/tags?page={page}")
+    return jsonify(res.json())
+
+
+@app.route("/api/registry/image/<namespace>/<image>")
+def registry_image_info(namespace, image):
+    res = requests.get(f"{DOCKER_HUB_API}/repositories/{namespace}/{image}")
+    return jsonify(res.json())
+
+
 
 @app.route("/deploy", methods=["POST"])
 def deploy():
@@ -218,6 +242,37 @@ def container_logs(container_id):
 def container_inspect(container_id):
     r = requests.get(f"{DOCKER_HOST}/containers/{container_id}/json")
     return jsonify(r.json() if r.ok else {"error": r.text})
+
+
+# === Image Management Routes ===
+
+@app.route("/api/images/<image_id>/remove", methods=["DELETE"])
+def remove_image(image_id):
+    r = requests.delete(f"{DOCKER_HOST}/images/{image_id}?force=true")
+    return jsonify({"status": "ok" if r.ok else "error", "response": r.text})
+
+
+@app.route("/api/images/<image_id>/inspect", methods=["GET"])
+def inspect_image(image_id):
+    r = requests.get(f"{DOCKER_HOST}/images/{image_id}/json")
+    return jsonify(r.json() if r.ok else {"error": r.text})
+
+
+@app.route("/api/images/pull", methods=["POST"])
+def pull_image():
+    data = request.json
+    image = data.get("image")
+    if not image:
+        return jsonify({"success": False, "message": "No image name provided"}), 400
+
+    r = requests.post(f"{DOCKER_HOST}/images/create", params={"fromImage": image})
+    return jsonify({"success": r.ok, "message": f"Status {r.status_code}: {r.text}"})
+
+
+@app.route("/api/images/prune", methods=["POST"])
+def prune_images():
+    r = requests.post(f"{DOCKER_HOST}/images/prune")
+    return jsonify({"success": r.ok, "message": f"Pruned {r.json().get('SpaceReclaimed', 0)} bytes"})
 
 
 if __name__ == "__main__":
