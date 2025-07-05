@@ -131,7 +131,7 @@ def index():
 @app.route("/api/registry/image/<image>/tags")
 def registry_tags(image):
     """Get tags for official Docker images like 'nginx', 'redis', etc."""
-    url = f"https://hub.docker.com/v2/repositories/library/ {image}/tags/"
+    url = f"https://hub.docker.com/v2/repositories/library/{image}/tags/"  # Fixed URL
     res = requests.get(url)
 
     if res.status_code != 200:
@@ -142,17 +142,35 @@ def registry_tags(image):
     except requests.exceptions.JSONDecodeError:
         return jsonify({"error": "Invalid JSON response from Docker Hub", "body": res.text})
 
+
 @app.route("/api/registry/image/<namespace>/<image>/tags")
-def registry_tags(namespace, image):
+def registry_user_image_tags(namespace, image):
+    """Get tags for user/public Docker images like 'bitnami/nginx'"""
     page = request.args.get("page", 1)
-    res = requests.get(f"{DOCKER_HUB_API}/repositories/{namespace}/{image}/tags?page={page}")
-    return jsonify(res.json())
+    url = f"https://hub.docker.com/v2/repositories/{namespace}/{image}/tags/?page={page}"
+
+    res = requests.get(url)
+    if res.status_code != 200:
+        return jsonify({"error": "Failed to fetch tags", "status": res.status_code, "body": res.text})
+
+    try:
+        return jsonify(res.json())
+    except requests.exceptions.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON response from Docker Hub", "body": res.text})
 
 
-@app.route("/api/registry/image/<namespace>/<image>")
-def registry_image_info(namespace, image):
-    res = requests.get(f"{DOCKER_HUB_API}/repositories/{namespace}/{image}")
-    return jsonify(res.json())
+@app.route("/api/registry/image/<image>")
+def registry_image_info(image):
+    url = f"https://hub.docker.com/v2/repositories/library/{image}"
+    res = requests.get(url)
+
+    if res.status_code != 200:
+        return jsonify({"error": "Failed to fetch image info", "status": res.status_code, "body": res.text})
+
+    try:
+        return jsonify(res.json())
+    except requests.exceptions.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON response from Docker Hub", "body": res.text})
 
 
 
